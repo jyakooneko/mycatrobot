@@ -27,14 +27,14 @@
             color: #ffffff;
             transition: transform 0.1s ease;
             text-align: center;
-            white-space: nowrap;
+            white-space: pre-wrap; /* 改行やスペースを反映 */
+            z-index: 1;
         }
 
-        /* 起動用オーバーレイ */
         #overlay {
             position: fixed;
             top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.8);
+            background: rgba(0,0,0,0.85);
             color: white;
             display: flex;
             flex-direction: column;
@@ -46,9 +46,10 @@
         }
 
         .instruction {
-            margin-top: 20px;
+            margin-top: 150px;
             font-size: 1.2rem;
             opacity: 0.8;
+            letter-spacing: 0.1em;
         }
 
         .shake-effect {
@@ -79,20 +80,33 @@
         let isSwiping = false;
         let isAwake = false;
 
+        // モーション管理用
+        let lastActionTime = Date.now();
+        let isPlayingIdle = false;
+
         const FACES = {
             normal: "l ω l",
             sleep: "- ω -",
             tap: "+ ω +",
             swiping: "- ω -",
             charge: "⚡ω⚡",
-            shaking: "𖦹 ω 𖦹;"
+            shaking: "𖦹 ω 𖦹;",
+            lookRight: "l ω 1",
+            lookLeft: "1 ω l",
+            awake: "o ω o",
+            yawn1: "(- ￢ - )",
+            yawn2: "(- □ - )",
+            debug: "0 ω 0",
+            bug: "l ω ⚡"
         };
+
+        const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
         function updateFace(status, duration = 0) {
             if (!isAwake && status !== 'normal') return; 
             
             if (timer) clearTimeout(timer);
-            face.innerText = FACES[status];
+            face.innerText = FACES[status] || status;
             
             if (status === 'shaking') {
                 face.classList.add('shake-effect');
@@ -108,75 +122,139 @@
             }
         }
 
-        // --- 起動処理 ---
+        function resetActivity() {
+            lastActionTime = Date.now();
+            if (isPlayingIdle) {
+                isPlayingIdle = false; // モーション中断フラグ
+                updateFace('normal');
+            }
+        }
+
+        // --- 待機モーション定義 ---
+
+        async function playIdleA() {
+            // 案A: キョロキョロ
+            const steps = [
+                {s: 'lookRight', d: 1000},
+                {s: 'lookLeft', d: 1000},
+                {s: 'normal', d: 500},
+                {s: 'sleep', d: 3000},
+                {s: 'normal', d: 0}
+            ];
+            for (let step of steps) {
+                if (!isPlayingIdle) break;
+                updateFace(step.s);
+                await sleep(step.d);
+            }
+        }
+
+        async function playIdleB() {
+            // 案B: うとうと
+            // 瞬きが加速
+            for (let i = 1; i <= 3; i++) {
+                for (let j = 0; j < i; j++) {
+                    if (!isPlayingIdle) return;
+                    updateFace('sleep'); await sleep(150);
+                    updateFace('normal'); await sleep(150);
+                }
+                await sleep(500);
+            }
+            if (!isPlayingIdle) return;
+            // いびきモーション
+            const zFiles = ["- ω -  z", "- ω -  zZ", "- ω -  zZZ", "- ω -"];
+            for (let i = 0; i < 4; i++) {
+                if (!isPlayingIdle) return;
+                face.innerText = zFiles[i % 4];
+                await sleep(1000);
+            }
+            if (!isPlayingIdle) return;
+            updateFace('awake'); await sleep(200);
+            updateFace('yawn1'); await sleep(500);
+            updateFace('yawn2'); await sleep(2000);
+            updateFace('normal');
+        }
+
+        async function playIdleC() {
+            // 案C: デバッグ
+            if (!isPlayingIdle) return;
+            updateFace('debug'); await sleep(500);
+            updateFace('normal'); await sleep(500);
+            for (let i = 0; i < 5; i++) {
+                updateFace('debug'); await sleep(100);
+                updateFace('normal'); await sleep(100);
+            }
+            updateFace('bug'); await sleep(300);
+            updateFace('normal');
+        }
+
+        // --- ループ処理 ---
+
+        function tickBlink() {
+            const now = Date.now();
+            if (isAwake && !isPlayingIdle && !timer && (now - lastActionTime > 3000)) {
+                updateFace('sleep');
+                setTimeout(() => { if (!timer && !isPlayingIdle) updateFace('normal'); }, 150);
+            }
+            setTimeout(tickBlink, Math.random() * 5000 + 3000);
+        }
+
+        async function tickIdle() {
+            const now = Date.now();
+            if (isAwake && !isPlayingIdle && !timer && (now - lastActionTime > 30000)) {
+                isPlayingIdle = true;
+                const r = Math.random();
+                if (r < 0.33) await playIdleA();
+                else if (r < 0.66) await playIdleB();
+                else await playIdleC();
+                isPlayingIdle = false;
+            }
+            setTimeout(tickIdle, Math.random() * 20000 + 10000);
+        }
+
+        // --- 起動 & イベント ---
+
         overlay.addEventListener('click', () => {
             isAwake = true;
             overlay.style.display = 'none';
-            updateFace('normal'); // 起動したら「l ω l」に
+            updateFace('normal');
             initSensors();
+            tickBlink();
+            tickIdle();
         });
 
         function initSensors() {
             if (typeof DeviceMotionEvent.requestPermission === 'function') {
-                DeviceMotionEvent.requestPermission()
-                    .then(state => {
-                        if (state === 'granted') {
-                            window.addEventListener('devicemotion', handleMotion);
-                        }
-                    }).catch(console.error);
+                DeviceMotionEvent.requestPermission().then(state => {
+                    if (state === 'granted') window.addEventListener('devicemotion', handleMotion);
+                }).catch(console.error);
             } else {
                 window.addEventListener('devicemotion', handleMotion);
             }
-
             if ('getBattery' in navigator) {
                 navigator.getBattery().then(battery => {
                     if (battery.charging) updateFace('charge', 1500);
-                    battery.addEventListener('chargingchange', () => {
-                        if (battery.charging) updateFace('charge', 1500);
-                    });
+                    battery.addEventListener('chargingchange', () => { if (battery.charging) updateFace('charge', 1500); });
                 });
             }
         }
 
-        // --- インタラクション ---
-        window.addEventListener('touchstart', (e) => {
-            if (!isAwake) return;
-            isSwiping = false;
-        });
-
-        window.addEventListener('touchmove', () => {
-            if (!isAwake) return;
-            isSwiping = true;
-            updateFace('swiping');
-        });
-
+        window.addEventListener('touchstart', () => { if (isAwake) { resetActivity(); isSwiping = false; } });
+        window.addEventListener('touchmove', () => { if (isAwake) { isSwiping = true; updateFace('swiping'); } });
         window.addEventListener('touchend', () => {
-            if (!isAwake) return;
-            if (!isSwiping) {
-                updateFace('tap', 1000);
-            } else {
-                updateFace('normal');
+            if (isAwake) {
+                if (!isSwiping) updateFace('tap', 1000);
+                else updateFace('normal');
+                isSwiping = false;
             }
-            isSwiping = false;
         });
 
-        // --- シェイク検知 ---
         let lastX, lastY, lastZ;
-        let threshold = 18;
-
         function handleMotion(event) {
             const acc = event.accelerationIncludingGravity;
             if (!acc || acc.x === null) return;
-
-            if (lastX !== undefined) {
-                let diff = Math.abs(acc.x - lastX) + Math.abs(acc.y - lastY) + Math.abs(acc.z - lastZ);
-                if (diff > threshold) {
-                    updateFace('shaking', 1000);
-                }
-            }
-            lastX = acc.x;
-            lastY = acc.y;
-            lastZ = acc.z;
+            let diff = Math.abs(acc.x - lastX) + Math.abs(acc.y - lastY) + Math.abs(acc.z - lastZ);
+            if (diff > 18) { resetActivity(); updateFace('shaking', 1000); }
+            lastX = acc.x; lastY = acc.y; lastZ = acc.z;
         }
     </script>
 </body>
