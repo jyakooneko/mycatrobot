@@ -28,7 +28,6 @@
             transition: transform 0.1s ease;
             text-align: center;
             white-space: nowrap;
-            cursor: pointer;
         }
 
         /* 起動用オーバーレイ */
@@ -38,11 +37,18 @@
             background: rgba(0,0,0,0.8);
             color: white;
             display: flex;
+            flex-direction: column;
             justify-content: center;
             align-items: center;
             z-index: 10;
             font-family: sans-serif;
+            cursor: pointer;
+        }
+
+        .instruction {
+            margin-top: 20px;
             font-size: 1.2rem;
+            opacity: 0.8;
         }
 
         .shake-effect {
@@ -61,17 +67,22 @@
 </head>
 <body>
 
-    <div id="overlay">画面をタップして相棒を起動</div>
-    <div id="robot-face">l ω l</div>
+    <div id="overlay">
+        <div style="font-family: 'Courier New', monospace; font-size: 15vw;">- ω -</div>
+        <div class="instruction">Tap to Wake Up</div>
+    </div>
+    <div id="robot-face">- ω -</div>
 
     <script>
         const face = document.getElementById('robot-face');
         const overlay = document.getElementById('overlay');
         let timer = null;
         let isSwiping = false;
+        let isAwake = false;
 
         const FACES = {
             normal: "l ω l",
+            sleep: "- ω -",
             tap: "+ ω +",
             swiping: "- ω -",
             charge: "⚡ω⚡",
@@ -79,6 +90,8 @@
         };
 
         function updateFace(status, duration = 0) {
+            if (!isAwake && status !== 'normal') return; 
+            
             if (timer) clearTimeout(timer);
             face.innerText = FACES[status];
             
@@ -96,14 +109,15 @@
             }
         }
 
-        // --- 起動処理 (iOSのセンサー許可 & バッテリー) ---
+        // --- 起動処理 ---
         overlay.addEventListener('click', () => {
+            isAwake = true;
             overlay.style.display = 'none';
+            updateFace('normal'); // 起動したら「l ω l」に
             initSensors();
         });
 
         function initSensors() {
-            // DeviceMotion許可リクエスト
             if (typeof DeviceMotionEvent.requestPermission === 'function') {
                 DeviceMotionEvent.requestPermission()
                     .then(state => {
@@ -115,14 +129,11 @@
                 window.addEventListener('devicemotion', handleMotion);
             }
 
-            // バッテリーAPI
             if ('getBattery' in navigator) {
                 navigator.getBattery().then(battery => {
-                    // 初期チェック（既に充電中なら）
-                    if (battery.charging) updateFace('charge', 1000);
-                    
+                    if (battery.charging) updateFace('charge', 1500);
                     battery.addEventListener('chargingchange', () => {
-                        if (battery.charging) updateFace('charge', 1000);
+                        if (battery.charging) updateFace('charge', 1500);
                     });
                 });
             }
@@ -130,20 +141,21 @@
 
         // --- インタラクション ---
         window.addEventListener('touchstart', (e) => {
-            isSwiping = false; // 初期化
+            if (!isAwake) return;
+            isSwiping = false;
         });
 
         window.addEventListener('touchmove', () => {
+            if (!isAwake) return;
             isSwiping = true;
             updateFace('swiping');
         });
 
         window.addEventListener('touchend', () => {
+            if (!isAwake) return;
             if (!isSwiping) {
-                // スワイプしていなければ「タップ」と判定
                 updateFace('tap', 1000);
             } else {
-                // スワイプ終了時は即座に通常に戻す
                 updateFace('normal');
             }
             isSwiping = false;
@@ -151,7 +163,7 @@
 
         // --- シェイク検知 ---
         let lastX, lastY, lastZ;
-        let threshold = 18; // 競プロ的に言えばしきい値調整（少し上げました）
+        let threshold = 18;
 
         function handleMotion(event) {
             const acc = event.accelerationIncludingGravity;
