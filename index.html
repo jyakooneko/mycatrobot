@@ -17,7 +17,7 @@
             justify-content: center;
             align-items: center;
             overflow: hidden;
-            touch-action: none; /* デフォルトのスクロールなどを禁止 */
+            touch-action: none;
             user-select: none;
         }
 
@@ -28,6 +28,21 @@
             transition: transform 0.1s ease;
             text-align: center;
             white-space: nowrap;
+            cursor: pointer;
+        }
+
+        /* 起動用オーバーレイ */
+        #overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+            font-family: sans-serif;
+            font-size: 1.2rem;
         }
 
         .shake-effect {
@@ -46,22 +61,23 @@
 </head>
 <body>
 
+    <div id="overlay">画面をタップして相棒を起動</div>
     <div id="robot-face">l ω l</div>
 
     <script>
         const face = document.getElementById('robot-face');
+        const overlay = document.getElementById('overlay');
         let timer = null;
+        let isSwiping = false;
 
         const FACES = {
             normal: "l ω l",
             tap: "+ ω +",
             swiping: "- ω -",
-            swiped: "l ω -",
             charge: "⚡ω⚡",
             shaking: "𖦹 ω 𖦹;"
         };
 
-        // 顔を更新する関数
         function updateFace(status, duration = 0) {
             if (timer) clearTimeout(timer);
             face.innerText = FACES[status];
@@ -80,57 +96,72 @@
             }
         }
 
-        // --- タップ & スワイプ ---
+        // --- 起動処理 (iOSのセンサー許可 & バッテリー) ---
+        overlay.addEventListener('click', () => {
+            overlay.style.display = 'none';
+            initSensors();
+        });
+
+        function initSensors() {
+            // DeviceMotion許可リクエスト
+            if (typeof DeviceMotionEvent.requestPermission === 'function') {
+                DeviceMotionEvent.requestPermission()
+                    .then(state => {
+                        if (state === 'granted') {
+                            window.addEventListener('devicemotion', handleMotion);
+                        }
+                    }).catch(console.error);
+            } else {
+                window.addEventListener('devicemotion', handleMotion);
+            }
+
+            // バッテリーAPI
+            if ('getBattery' in navigator) {
+                navigator.getBattery().then(battery => {
+                    // 初期チェック（既に充電中なら）
+                    if (battery.charging) updateFace('charge', 1000);
+                    
+                    battery.addEventListener('chargingchange', () => {
+                        if (battery.charging) updateFace('charge', 1000);
+                    });
+                });
+            }
+        }
+
+        // --- インタラクション ---
         window.addEventListener('touchstart', (e) => {
-            // iOSのセンサー許可リクエスト（初回のみ）
-            requestSensorPermission();
-            updateFace('tap');
+            isSwiping = false; // 初期化
         });
 
         window.addEventListener('touchmove', () => {
+            isSwiping = true;
             updateFace('swiping');
         });
 
         window.addEventListener('touchend', () => {
-            updateFace('swiped', 1000);
+            if (!isSwiping) {
+                // スワイプしていなければ「タップ」と判定
+                updateFace('tap', 1000);
+            } else {
+                // スワイプ終了時は即座に通常に戻す
+                updateFace('normal');
+            }
+            isSwiping = false;
         });
-
-        // --- 充電検知 ---
-        if ('getBattery' in navigator) {
-            navigator.getBattery().then(battery => {
-                battery.addEventListener('chargingchange', () => {
-                    if (battery.charging) {
-                        updateFace('charge', 1000);
-                    }
-                });
-            });
-        }
 
         // --- シェイク検知 ---
         let lastX, lastY, lastZ;
-        let threshold = 15; // 揺れのしきい値
-
-        function requestSensorPermission() {
-            if (typeof DeviceMotionEvent.requestPermission === 'function') {
-                DeviceMotionEvent.requestPermission()
-                    .then(permissionState => {
-                        if (permissionState === 'granted') {
-                            window.addEventListener('devicemotion', handleMotion);
-                        }
-                    })
-                    .catch(console.error);
-            } else {
-                window.addEventListener('devicemotion', handleMotion);
-            }
-        }
+        let threshold = 18; // 競プロ的に言えばしきい値調整（少し上げました）
 
         function handleMotion(event) {
             const acc = event.accelerationIncludingGravity;
-            if (!acc.x) return;
+            if (!acc || acc.x === null) return;
 
-            let diff = Math.abs(acc.x - lastX) + Math.abs(acc.y - lastY) + Math.abs(acc.z - lastZ);
-            if (diff > threshold) {
-                updateFace('shaking', 1000);
+            if (lastX !== undefined) {
+                let diff = Math.abs(acc.x - lastX) + Math.abs(acc.y - lastY) + Math.abs(acc.z - lastZ);
+                if (diff > threshold) {
+                    updateFace('shaking', 1000);
+                }
             }
             lastX = acc.x;
             lastY = acc.y;
